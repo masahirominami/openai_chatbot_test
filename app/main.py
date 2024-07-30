@@ -1,33 +1,28 @@
+# app/main.py
 from fastapi import FastAPI
-from app.routes import query
+from app.routes.query import router as query_router 
+from app.routes.health import router as health_router 
 import logging
-from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure
-import time
 import sys
+from app.db import wait_for_mongodb  # Import from app/db.py
+from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# Set up MongoDB connection
-mongo_client = MongoClient("mongodb://localhost:27017")
-db = mongo_client["chatbot_db"]
-conversations = db["conversations"]
+origins = [
+    "http://localhost:3000",
+]
 
-def wait_for_mongodb():
-    max_tries = 30
-    tries = 0
-    while tries < max_tries:
-        try:
-            # The ismaster command is cheap and does not require auth.
-            mongo_client.admin.command('ismaster')
-            return True
-        except ConnectionFailure:
-            tries += 1
-            time.sleep(1)
-    return False
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 if not wait_for_mongodb():
     logger.error("Unable to connect to MongoDB. Exiting...")
@@ -36,8 +31,10 @@ if not wait_for_mongodb():
 logger.info("Successfully connected to MongoDB")
 
 # Include the router
-app.include_router(query.router)
+app.include_router(query_router)
+app.include_router(health_router)
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

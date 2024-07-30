@@ -1,21 +1,32 @@
+# file2.py
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-import openai
+from pydantic import BaseModel, Field
+from openai import AzureOpenAI
 import os
 from datetime import datetime
 import uuid
 import logging
-from app.main import conversations
+import json
+from app.db import conversations  # Import from app/db.py
+# importing necessary functions from dotenv library
+from dotenv import load_dotenv, dotenv_values 
+
+# loading variables from .env file
+load_dotenv() 
 
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
-# Set up OpenAI API key
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# AzureOpenAI
+client = AzureOpenAI(
+  api_key = os.getenv("AZURE_OPENAI_API_KEY"),
+  api_version = "2024-02-01",
+  azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+)
 
 class Query(BaseModel):
-    user_input: str
+    user_input: str = Field(..., min_length=1, description="User input text")
     conversation_id: str = None
 
 def get_conversation_history(conversation_id):
@@ -27,8 +38,19 @@ def get_conversation_history(conversation_id):
         ]
     return []
 
+def reduce_messages(messages, max_len):
+    str = json.dumps(messages)
+    while len(str) > max_len:
+        del messages[1]
+        str = json.dumps(messages)
+
+    return messages
+
 @router.post("/query")
 async def query(query: Query):
+#    if not openai.api_key:
+#        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+
     try:
         conversation_id = query.conversation_id or str(uuid.uuid4())
         conversation_history = get_conversation_history(conversation_id)
@@ -44,13 +66,14 @@ async def query(query: Query):
             "timestamp": datetime.utcnow()
         }
         conversations.insert_one(user_document)
+        messages = reduce_messages(messages, 4000)
 
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+        response = client.chat.completions.create(
+            model="gpt-35-turbo",
             messages=messages
         )
 
-        ai_response = response.choices[0].message['content']
+        ai_response = response.choices[0].message.content
 
         ai_document = {
             "conversation_id": conversation_id,
@@ -61,8 +84,9 @@ async def query(query: Query):
         conversations.insert_one(ai_document)
 
         logger.info(f"Processed query for conversation {conversation_id}")
-        return {"response": ai_response, "conversation_id": conversation_id}
+        return {"response": ai_response, "messages": messages, "conversation_id": conversation_id}
 
     except Exception as e:
         logger.error(f"Error processing query: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
