@@ -3,3 +3,4 @@ uvicorn
 openai
 pymongo
 python-dotenv
+tiktoken
